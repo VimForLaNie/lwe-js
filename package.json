@@ -1,0 +1,11 @@
+{
+  "name": "lwe-js",
+  "version": "1.0.0",
+  "description": "Learning with Error Encryption Scheme in Javascript",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "VimForLaNie",
+  "license": "ISC"
+}
