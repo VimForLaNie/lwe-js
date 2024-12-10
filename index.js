@@ -1,94 +1,102 @@
-const generatePrivateKey = (size) => {
-    const modulo = Math.pow(2, Math.ceil(Math.log(((1*size) << 10))/Math.log(2)));
-    console.log(`modulo : ${modulo}`);
+// everything mod 128
 
-    const randomNumbers = new Uint16Array(size+1); // Increase size by 1 to include modulo
-    window.crypto.getRandomValues(randomNumbers);
-    for (let i = 0; i < size; i++) {
-        randomNumbers[i] = randomNumbers[i] % modulo;
-        // console.log(`appended : ${randomNumbers}`)
+const generatePrivatekey = () => {
+    const randomNumbers = [];
+    for (let i = 0; i < 64; i++) {
+        randomNumbers.push(Math.floor(Math.random() * 128));
     }
-    randomNumbers[size] = modulo;
-
-    // console.log(`append mod ${modulo} : ${randomNumbers}`);
-    const base64 = btoa(randomNumbers);
-
-    console.log(`vector : ${randomNumbers}\nprivate key: ${base64}`);
-    return [base64,modulo];
+    return randomNumbers;
 }
 
-const readPrivateKey = (base64) => {
-    const result = atob(base64).split(',').map(x => parseInt(x));
-    // console.info(`read private key : ${base64} => ${result}`);
-    return result;
-}
-
-const generatePublicKey = (size, privateKey) => {
-    const modulo = privateKey[privateKey.length - 1];
-    // console.log(`read modulo : ${modulo}`)
-    // Determine column size by subtracting 1 from the length of the private key
-    const col = privateKey.length - 1;
-    // generate public key from private key
-    const matrix = [];
-    for (let i = 0; i < size; i++) {
-        const r = [];
-        const randomValues = new Uint16Array(col);
-        window.crypto.getRandomValues(randomValues);
-        for (let j = 0; j < col; j++) {
-            // mod with modulo
-            const randomValue = randomValues[j] % modulo;
-            r.push(randomValue);
+const generatePublickey = (privateKey) => {
+    const equations = [];
+    for(let i = 0; i < 512; i++){
+        const equation = [];
+        let offset = 0;
+        for(let x = 0; x < 64; x++){
+            let coefficient = Math.floor(Math.random() * 128);
+            equation.push(coefficient);
+            offset += 128 - (coefficient * privateKey[x]) % 128;
         }
-        // calculate dot product with private key
-        let dotProduct = r.reduce((sum, val, idx) => sum + (val * privateKey[idx]), 0) % modulo;
-        // add some errors
-        dotProduct += window.crypto.getRandomValues(new Uint16Array(1))[0] % (modulo / 2);
-        r.push(dotProduct);
-        matrix.push(r);
+        equation.push(offset %= 128);
+        equations.push(equation);
     }
-    // encode to base64
-    // const publicKey = btoa(String.fromCharCode.apply(null, matrix.flat()));
-    const publicKey = btoa(matrix);
-    console.log(`matrix form : ${matrix}\nbase64 : ${publicKey}`);
-    return [publicKey,modulo];
+    return equations;
 }
 
-const readPublicKey = (base64) => {
-    // convert to Uint8Array
-    const array = atob(base64).split(',').map(x => parseInt(x));
-    // console.log(array)
-    return array;
-}
-
-const encrypt = (publicKey,modulo, message) => {
-    const messageArray = btoa(message)
-    console.log(`messageArray : ${messageArray}`);
-    const publicKeyArray = readPublicKey(publicKey);
-    const randomRows = [];
-    const randomValues = new Uint16Array(publicKeyArray.length);
-    window.crypto.getRandomValues(randomValues);
-    for (let i = 0; i < publicKeyArray.length; i++) {
-        const randomValue = randomValues[i] % 2;
-        if (randomValue === 1) continue;
-        randomRows.push(publicKeyArray[i]);
-    }
-    const level = 1 << 8;
-    const error = modulo / level;
-    console.log(randomRows);
-    const newRow = new Uint16Array(randomRows.length);
-    // console.log(newRow);
-    for (let row = 0; row < (randomRows.length)/(4+1); row++) {
-        for(let i = 0; i < newRow.length; i++){
-            newRow[i] = (newRow[i] + randomRows[i + row*randomRows.length]) % modulo;
-            // console.log((newRow[i] + randomRows[i + row*randomRows.length]) % modulo);
+//message is a single bit
+const _encrypt = (message, partialPublickey) => {
+    let newEquation = Array(partialPublickey[0].length).fill(0);
+    for(let i = 0; i < partialPublickey.length; i++){
+        const keyEquation = partialPublickey[i];
+        for(let t = 0; t < partialPublickey[0].length; t++){
+            newEquation[t] += keyEquation[t];
+            if(t == partialPublickey[0].length - 1){
+                newEquation[t] += Math.floor(Math.random()*2) - 1;
+            }
+            newEquation[t] += 128;
+            newEquation[t] %= 128;
         }
     }
-    console.log(`newRow : ${newRow}`);
+    let constant = newEquation[newEquation.length-1];
+    if(message == 1) {
+        if(constant < 32 && constant > 96) {
+            newEquation[newEquation.length-1] += 64;
+        }
+    }
+    else{
+        if(constant >= 32 && constant <= 96) {
+            newEquation[newEquation.length-1] += 64;
+        }
+    }
+    newEquation[newEquation.length-1] += 128;
+    newEquation[newEquation.length-1] %= 128;
+    return newEquation;
 }
 
-// Example usage
-const [privateKeyBase64,mod] = generatePrivateKey(32); // Generate a private key
-const privateKey = readPrivateKey(privateKeyBase64); // Read the private key
-const [pub, _] = generatePublicKey(128, privateKey); // Generate the public key matrix
-console.log("encryption");
-encrypt(pub,mod,"hello");
+const _decrypt = (encrypted, privateKey) => {
+    let answer = 0;
+    for(i = 0; i < encrypted.length - 1; i++){
+        answer += privateKey[i] * encrypted[i];
+        answer %= 128;
+    }
+
+    let a = Math.min(answer,encrypted[encrypted.length - 1]);
+    let b = Math.max(answer,encrypted[encrypted.length - 1]);
+    let err = (b-a) % 128;
+    console.debug(err);
+    console.debug(answer);
+    if(answer >= 32 && answer <= 96) {
+        console.info(`1`)
+        return (err >= 64) ? 0 : 1;
+    }
+    else {
+        console.info(`0`)
+        return (err >= 64) ? 1 : 0;
+    }
+}
+
+const getPartialPublicKey = (publicKey) => {
+    const totalRows = 512;
+     const indices = Array.from({ length: totalRows }, (_, i) => i);
+
+     for (let i = totalRows - 1; i > 0; i--) {
+         const j = Math.floor(Math.random() * (i + 1));
+         [indices[i], indices[j]] = [indices[j], indices[i]];
+     }
+ 
+     const selectedRows = indices.slice(0, 32).map(index => publicKey[index]);
+     return selectedRows;
+}
+
+let pr = generatePrivatekey();
+let pu = generatePublickey(pr);
+let data = Math.floor(Math.random()*2);
+let edata = _encrypt(data,getPartialPublicKey(pu));
+let ddata = _decrypt(edata,pr);
+
+console.log(`private : ${pr}`);
+console.log(`public : ${pu}`)
+console.log(`data bit : ${data}`)
+console.log(` -> encrypted ${edata}`)
+console.log(` -> decrypted ${ddata}`)
